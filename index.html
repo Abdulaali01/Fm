@@ -74,7 +74,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script id="app">
-const VER="v8.2";
+const VER="v8.3";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const EMB=(typeof EMBED!=="undefined")?EMBED:null;
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
@@ -170,7 +170,7 @@ function showClosed(t,m){CLOSED=true;$("#bar").hidden=true;$("#main").hidden=tru
   if(ext)$("#gateForm").onsubmit=async e=>{e.preventDefault();if(tryExtend($("#extIn").value)){REMOTE=null;location.reload();return}else $("#extErr").textContent="الرمز غير صحيح أو مستخدم من قبل"};$("#gateForm").insertAdjacentHTML("beforeend",EMB&&EMB.fid&&FB_DB?`<button type="button" id="recheck" class="b-link" style="margin-top:4px">🔄 تحقق مرة أخرى</button>`:"");const rc=$("#recheck");if(rc)rc.onclick=async()=>{rc.disabled=true;await fetchRemote();if(!stopped())location.reload();else{rc.disabled=false;toast("ما زالت متوقفة")}}}
 function closeNow(){if(REMOTE&&REMOTE.active===false)showClosed("الصفحة متوقفة","أوقف صاحب الملف هذه الصفحة.");else showClosed("انتهت المدة",STOP_MSG)}
 setTimeout(async()=>{if(EMB&&EMB.fid&&FB_DB){$("#gate").hidden=false;$("#gateForm").innerHTML="<h2>جارٍ التحقق…</h2>";await fetchRemote()}
-  if(stopped())closeNow();else await openApp();renderSent();
+  if(stopped())closeNow();else await openApp();if(!EMB)await restoreSent();renderSent();
   setInterval(async()=>{await fetchRemote();if(stopped()){if(!CLOSED)closeNow()}else if(CLOSED)location.reload();else if(EMB)$("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+untilText()},60000)},0);
 function remoteText(){if(!EMB||!EMB.fid)return "";return {ok:" · 🌐 متصل بالتحكم",none:" · ⚠️ الملف غير مسجّل في التحكم",fail:" · ⚠️ لا اتصال بالتحكم"}[RSTATE]||(RSTATE?" · ⚠️ خطأ "+RSTATE:"")}
 function untilText(){const t=effectiveExpiry();if(t===null)return "";const d=new Date(t);return remoteText()+" · متاح حتى "+d.toLocaleString("ar-SA-u-ca-gregory",{weekday:"long",hour:"numeric",minute:"2-digit"})}
@@ -285,8 +285,28 @@ function renderOwner(){const o=$("#owner");if(!o)return;const a=authGet();o.inne
     finally{go.disabled=false;go.textContent="دخول"}};
   o.append(el("b",{textContent:"🔐 سجّل دخولك للتمديد والإيقاف (بريد وكلمة مرور Firebase):"}),em,pw,go,msg)}
 const fmt=t=>new Date(t).toLocaleString("ar-SA-u-ca-gregory",{weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"});
-function sentList(){try{return JSON.parse(localStorage.getItem("sent_files")||"[]")}catch(_){return []}}
-function saveSent(l){try{localStorage.setItem("sent_files",JSON.stringify(l.slice(0,50)))}catch(_){}}
+let SENT_MEMORY=null;
+function sentList(){
+  if(SENT_MEMORY)return SENT_MEMORY;
+  try{const l=JSON.parse(localStorage.getItem("sent_files")||"[]");SENT_MEMORY=Array.isArray(l)?l:[]}catch(_){SENT_MEMORY=[]}
+  return SENT_MEMORY;
+}
+async function saveSent(l){
+  SENT_MEMORY=l.slice(0,50);
+  try{localStorage.setItem("sent_files",JSON.stringify(SENT_MEMORY))}catch(_){}
+  try{const db=await draftDB();await new Promise((resolve,reject)=>{
+    const tx=db.transaction("drafts","readwrite");tx.objectStore("drafts").put(SENT_MEMORY,"sent_files");
+    tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+  });return true}catch(e){console.warn("Sent list save failed",e);return false}
+}
+async function restoreSent(){
+  const list=sentList();
+  try{const db=await draftDB();const stored=await new Promise((resolve,reject)=>{
+    const tx=db.transaction("drafts","readonly"),r=tx.objectStore("drafts").get("sent_files");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+  });if(Array.isArray(stored)){const have=new Set(list.map(f=>f.fid));stored.forEach(f=>{if(!have.has(f.fid)){list.push(f);have.add(f.fid)}})}
+  }catch(e){console.warn("Sent list restore failed",e)}
+  list.sort((a,b)=>b.created-a.created);SENT_MEMORY=list;
+}
 async function syncSent(){const t=await idToken();if(!t)return false;try{const r=await fetch(`${FB_DB}/files.json?auth=${encodeURIComponent(t)}`,{cache:"no-store"});if(!r.ok)return "err"+r.status;
   const all=await r.json()||{};const L=sentList();const have=new Set(L.map(x=>x.fid));
   Object.entries(all).forEach(([fid,d])=>{if(!d||have.has(fid)||fid.startsWith("_"))return;L.push({fid,name:d.name||"ملف",count:d.count||0,created:d.created||0,hours:d.hours||24,seed:"",used:0})});
@@ -325,15 +345,22 @@ $("#btnPdf").onclick=async()=>{if(stopped()){toast(STOP_MSG);return}const btn=$(
     offer(makePdf(jp),docName+" - معبأ.pdf","application/pdf",!!EMB);toast("ملف PDF جاهز")}
   catch(e){console.warn(e);toast("تعذّر تجهيز الملف، حاول مرة أخرى")}
   finally{btn.disabled=false;btn.textContent="📄 تجهيز PDF"}};
-$("#btnHtml").onclick=()=>{const h=Math.min(24,Math.max(1,parseInt($("#hrs").value)||24));const exp=new Date(Date.now()+h*3600e3).toISOString();
+$("#btnHtml").onclick=async()=>{
+  if(!IDS.length){toast("أرفق ملف PDF أولاً");return}
+  if(!authGet()){needLogin();return}
+  const btn=$("#btnHtml");btn.disabled=true;btn.textContent="جارٍ إنشاء ملف الإرسال…";
+  try{const h=Math.min(24,Math.max(1,parseInt($("#hrs").value)||24));const exp=new Date(Date.now()+h*3600e3).toISOString();
   const seed=crypto.getRandomValues(new Uint8Array(10)),fid=toHex(crypto.getRandomValues(new Uint8Array(6))),anchor=toHex(chainAt(seed,0));
-  const list=sentList();list.unshift({fid,name:docName,count:IDS.length,created:Date.now(),hours:h,seed:toHex(seed),used:0});saveSent(list);
-  fbPatch(fid,{until:Date.parse(exp),active:true,name:docName,created:Date.now(),count:IDS.length,hours:h}).then(()=>renderSent()).catch(e=>{renderSent();toast(e.message==="login"?"الملف جاهز — سجّل دخولك لتتحكم به عن بُعد":"الملف جاهز — لم يُسجَّل في القاعدة")});
+  const list=sentList();list.unshift({fid,name:docName,count:IDS.length,created:Date.now(),hours:h,seed:toHex(seed),used:0});await fbPatch(fid,{until:Date.parse(exp),active:true,name:docName,created:Date.now(),count:IDS.length,hours:h});
+  const kept=await saveSent(list);renderSent();
+  if(!kept)toast("تم تسجيل الملف. تعذّر حفظ القائمة محليًا؛ يمكن استعادتها بتسجيل الدخول");
   const q=k=>k==="cfg"?SRC.cfg.replace(/var EXPIRES\s*=\s*"[^"]*"/,`var EXPIRES = "${exp}"`).replace(/var ACTIVE\s*=\s*\w+/,"var ACTIVE  = true"):SRC[k];
   const lt="<",doc=`${lt}!doctype html>${lt}html lang="ar" dir="rtl">${lt}head>${lt}meta charset="utf-8">${lt}meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${lt}title>${docName}${lt}/title>`+
    `${lt}link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap">${lt}style id="css">${q("css")}${lt}/style>${lt}/head>${lt}body>`+
    `${lt}script id="cfg">${q("cfg")}${lt}/script>${lt}script>var EMBED=${JSON.stringify({name:docName,pages:PAGES,ids:IDS,fid,anchor,hours:h}).replace(/</g,"\\u003c")};${lt}/script>`+
    `${lt}script id="app">${q("app")}${lt}/script>${lt}/body>${lt}/html>`;
-  offer(new Blob([doc],{type:"text/html"}),docName+" - للتعبئة.html","text/html");toast(`ملف الإرسال جاهز — صالح ${h} ساعة`)};
+  offer(new Blob([doc],{type:"text/html"}),docName+" - للتعبئة.html","text/html");toast(`ملف الإرسال جاهز — صالح ${h} ساعة`);$("#sent").open=true;$("#sent").scrollIntoView({behavior:"smooth",block:"start"})
+  }catch(e){console.warn(e);toast("تعذّر إنشاء ملف الإرسال: "+(e.message||e))}
+  finally{btn.disabled=false;btn.textContent="📦 ملف للإرسال"}};
 </script>
 </body></html>
