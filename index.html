@@ -74,7 +74,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script id="app">
-const VER="v8.4";
+const VER="v8.6";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const EMB=(typeof EMBED!=="undefined")?EMBED:null;
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
@@ -158,6 +158,7 @@ document.body.innerHTML=`
 <button class="b-link" id="btnAttach" type="button">📎 إرفاق ملف PDF</button>
 <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
 <button class="b-pdf" id="btnPdf" type="button" hidden>📄 تجهيز PDF</button>
+<button class="b-pdf" id="btnDelete" type="button" hidden>🗑 حذف الملف</button>
 <label class="hrs" id="hrsBox" hidden>صلاحية ملف الإرسال <select id="hrs" aria-label="مدة صلاحية ملف الإرسال">${Array.from({length:24},(_,i)=>`<option value="${i+1}"${i===23?" selected":""}>${i+1} ساعة</option>`).join("")}</select></label>
 <button class="b-send" id="btnHtml" type="button" hidden>📦 ملف للإرسال</button>
 <div class="done" id="done" hidden></div><div class="status" id="status"></div></div></header>
@@ -191,6 +192,10 @@ async function openApp(){
 
 $("#btnAttach").onclick=()=>$("#pdfIn").click();
 $("#pdfIn").onchange=async()=>{const f=$("#pdfIn").files[0];$("#pdfIn").value="";if(!f)return;
+  const normalizedName=n=>String(n).normalize("NFC").trim().replace(/\.pdf$/i,"").trim().toLocaleLowerCase();
+  if(PAGES.length&&normalizedName(f.name)===normalizedName(docName)){
+    toast("هذا الملف موجود بالفعل بنفس الاسم. احذفه أولاً إذا أردت إرفاقه من جديد");return;
+  }
   if(!window.pdfjsLib){toast("تحتاج اتصالاً بالإنترنت لقراءة ملف PDF");return}
   const b=$("#btnAttach");b.disabled=true;
   try{pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -206,7 +211,7 @@ $("#pdfIn").onchange=async()=>{const f=$("#pdfIn").files[0];$("#pdfIn").value=""
   finally{b.disabled=false;b.textContent="📎 إرفاق ملف PDF"}};
 
 function load(pages,ids){PAGES=pages;IDS=ids;state={};IDS.forEach(id=>state[id]={ifada:"",coords:"",before:"",after:""});restore();
-  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
+  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
   $("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;build();scheduleDraft()}
 
 function build(){const list=$("#list");list.innerHTML="";
@@ -332,6 +337,23 @@ function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}render
     b.onclick=async()=>{const L=sentList();const F=L[idx];if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
       const code=toCode(chainAt(fromHex(F.seed),F.used));out.textContent=code;try{await navigator.clipboard.writeText(code);toast(`نُسخ الرمز — يمدّد ${F.hours} ساعة`)}catch(_){toast("انسخ الرمز الظاهر")}};
     if(f.seed)li.append(b,out);ul.append(li)})}
+$("#btnDelete").onclick=async()=>{
+  if(EMB)return;
+  if(!confirm("حذف الملف المفتوح وصوره والإفادات المحفوظة؟ ستبقى ملفات الإرسال وأزرار التحكم بها."))return;
+  const btn=$("#btnDelete");btn.disabled=true;
+  clearTimeout(draftTimer);
+  try{
+    const db=await draftDB();
+    await new Promise((resolve,reject)=>{const tx=db.transaction("drafts","readwrite");tx.objectStore("drafts").delete(draftKey());tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)});
+    try{localStorage.removeItem(KEY())}catch(_){}
+    PAGES=[];IDS=[];state={};docName="البلاغات";
+    $("#list").innerHTML="";$("#empty").hidden=false;$("#ttl").textContent="تعبئة البلاغات";
+    for(const id of ["#btnPdf","#btnDelete","#btnHtml","#hrsBox","#done"])$(id).hidden=true;
+    $("#done").innerHTML="";$("#status").textContent="ابدأ بإرفاق ملف PDF. ("+VER+")";
+    toast("تم حذف الملف المفتوح وصوره وإفاداته");
+  }catch(e){console.warn(e);toast("تعذّر حذف الملف المحفوظ؛ حاول مرة أخرى")}
+  finally{btn.disabled=false}
+};
 $("#btnPdf").onclick=async()=>{const btn=$("#btnPdf");btn.disabled=true;btn.textContent="جارٍ التحقق والتجهيز…";
   try{if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}try{await document.fonts.load("700 30px Cairo")}catch(_){}const jp=[];let W=910,H=1287;
     for(let i=0;i<IDS.length;i++){const st=state[IDS[i]];const bg=await loadImg(PAGES[i]);W=bg.width;H=bg.height;
