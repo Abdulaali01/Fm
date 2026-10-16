@@ -74,7 +74,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script id="app">
-const VER="v8.3";
+const VER="v8.4";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const EMB=(typeof EMBED!=="undefined")?EMBED:null;
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
@@ -107,7 +107,7 @@ let REMOTE=null,CLOSED=false,RSTATE="";
 async function fetchRemote(){if(!EMB||!EMB.fid||!FB_DB)return;try{const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),7000);
   const r=await fetch(`${FB_DB}/files/${EMB.fid}.json`,{signal:ctl.signal,cache:"no-store"});clearTimeout(tm);if(r.ok){const d=await r.json();REMOTE=(d&&typeof d==="object")?d:null;RSTATE=REMOTE?"ok":"none"}else RSTATE="err"+r.status}catch(e){RSTATE="fail"}}
 function effectiveExpiry(){const base=REMOTE&&REMOTE.until?REMOTE.until:(EXPIRES?new Date(EXPIRES).getTime():null);if(base===null)return null;let t=base;const x=EMB&&extState();if(x&&x.until>t)t=x.until;return t}
-function stopped(){if(!ACTIVE)return true;if(REMOTE&&REMOTE.active===false)return true;const t=effectiveExpiry();return t!==null&&Date.now()>t}
+function stopped(){if(EMB&&EMB.fid&&FB_DB&&(RSTATE!=="ok"||!REMOTE))return true;if(!ACTIVE)return true;if(REMOTE&&REMOTE.active===false)return true;const t=effectiveExpiry();return t!==null&&Date.now()>t}
 function tryExtend(code){if(!EMB||!EMB.anchor)return false;const b=fromCode(code);if(!b)return false;
   const st=extState()||{k:0,cur:EMB.anchor};let x=b;
   for(let j=1;j<=CHAIN-st.k;j++){x=h10(x);if(toHex(x)===st.cur){const until=Date.now()+(EMB.hours||24)*3600e3;
@@ -165,13 +165,15 @@ document.body.innerHTML=`
 <div class="toast" id="toast" hidden></div>`;
 
 function showClosed(t,m){CLOSED=true;$("#bar").hidden=true;$("#main").hidden=true;$("#gate").hidden=false;
-  const ext=EMB&&EMB.anchor&&ACTIVE&&!(REMOTE&&REMOTE.active===false);
+  const ext=EMB&&EMB.anchor&&ACTIVE&&RSTATE==="ok"&&!(REMOTE&&REMOTE.active===false);
   $("#gateForm").innerHTML=`<h2>${t}</h2><p>${m}</p>`+(ext?`<p>إذا أرسل لك صاحب الملف رمز تمديد، اكتبه هنا:</p><input id="extIn" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX" aria-label="رمز التمديد" style="letter-spacing:.08em;font-size:1.1rem;direction:ltr"><div class="err" id="extErr"></div><button type="submit">تمديد</button>`:"");
   if(ext)$("#gateForm").onsubmit=async e=>{e.preventDefault();if(tryExtend($("#extIn").value)){REMOTE=null;location.reload();return}else $("#extErr").textContent="الرمز غير صحيح أو مستخدم من قبل"};$("#gateForm").insertAdjacentHTML("beforeend",EMB&&EMB.fid&&FB_DB?`<button type="button" id="recheck" class="b-link" style="margin-top:4px">🔄 تحقق مرة أخرى</button>`:"");const rc=$("#recheck");if(rc)rc.onclick=async()=>{rc.disabled=true;await fetchRemote();if(!stopped())location.reload();else{rc.disabled=false;toast("ما زالت متوقفة")}}}
-function closeNow(){if(REMOTE&&REMOTE.active===false)showClosed("الصفحة متوقفة","أوقف صاحب الملف هذه الصفحة.");else showClosed("انتهت المدة",STOP_MSG)}
+function closeNow(){if(EMB&&EMB.fid&&FB_DB&&(RSTATE!=="ok"||!REMOTE)){showClosed("يلزم التحقق عبر الإنترنت","اتصل بالإنترنت ثم اضغط تحقق مرة أخرى. لن يُفتح الملف أو يُجهّز PDF حتى يتم التحقق من صلاحية الملف.");return}if(REMOTE&&REMOTE.active===false)showClosed("الصفحة متوقفة","أوقف صاحب الملف هذه الصفحة.");else showClosed("انتهت المدة",STOP_MSG)}
 setTimeout(async()=>{if(EMB&&EMB.fid&&FB_DB){$("#gate").hidden=false;$("#gateForm").innerHTML="<h2>جارٍ التحقق…</h2>";await fetchRemote()}
   if(stopped())closeNow();else await openApp();if(!EMB)await restoreSent();renderSent();
   setInterval(async()=>{await fetchRemote();if(stopped()){if(!CLOSED)closeNow()}else if(CLOSED)location.reload();else if(EMB)$("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+untilText()},60000)},0);
+window.addEventListener("offline",()=>{if(EMB&&EMB.fid&&FB_DB){RSTATE="fail";closeNow()}});
+window.addEventListener("online",async()=>{if(EMB&&EMB.fid&&FB_DB){await fetchRemote();if(stopped())closeNow();else if(CLOSED)location.reload()}});
 function remoteText(){if(!EMB||!EMB.fid)return "";return {ok:" · 🌐 متصل بالتحكم",none:" · ⚠️ الملف غير مسجّل في التحكم",fail:" · ⚠️ لا اتصال بالتحكم"}[RSTATE]||(RSTATE?" · ⚠️ خطأ "+RSTATE:"")}
 function untilText(){const t=effectiveExpiry();if(t===null)return "";const d=new Date(t);return remoteText()+" · متاح حتى "+d.toLocaleString("ar-SA-u-ca-gregory",{weekday:"long",hour:"numeric",minute:"2-digit"})}
 
@@ -330,8 +332,8 @@ function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}render
     b.onclick=async()=>{const L=sentList();const F=L[idx];if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
       const code=toCode(chainAt(fromHex(F.seed),F.used));out.textContent=code;try{await navigator.clipboard.writeText(code);toast(`نُسخ الرمز — يمدّد ${F.hours} ساعة`)}catch(_){toast("انسخ الرمز الظاهر")}};
     if(f.seed)li.append(b,out);ul.append(li)})}
-$("#btnPdf").onclick=async()=>{if(stopped()){toast(STOP_MSG);return}const btn=$("#btnPdf");btn.disabled=true;btn.textContent="جارٍ التجهيز…";
-  try{try{await document.fonts.load("700 30px Cairo")}catch(_){}const jp=[];let W=910,H=1287;
+$("#btnPdf").onclick=async()=>{const btn=$("#btnPdf");btn.disabled=true;btn.textContent="جارٍ التحقق والتجهيز…";
+  try{if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}try{await document.fonts.load("700 30px Cairo")}catch(_){}const jp=[];let W=910,H=1287;
     for(let i=0;i<IDS.length;i++){const st=state[IDS[i]];const bg=await loadImg(PAGES[i]);W=bg.width;H=bg.height;
       const c=el("canvas");c.width=W;c.height=H;const ctx=c.getContext("2d");ctx.drawImage(bg,0,0,W,H);
       for(const k of ["before","after"]){if(!st[k])continue;const sx=SLOT[k]/100*W,sy=.072*H,sw=.369*W,sh=.363*H;ctx.fillStyle="#fff";ctx.fillRect(sx,sy,sw,sh);
@@ -342,6 +344,7 @@ $("#btnPdf").onclick=async()=>{if(stopped()){toast(STOP_MSG);return}const btn=$(
       for(const k of ["ifada","coords"]){const b=BOX[k],x=b[0]/100*W,y=b[1]/100*H,w=b[2]/100*W,h=b[3]/100*H,fs=Math.round((k==="ifada"?30:26)*W/910),pad=12;
         ctx.direction=/[\u0600-\u06FF]/.test(st[k]||"")?"rtl":"ltr";ctx.font=`700 ${fs}px Cairo, Tahoma, sans-serif`;wrapLines(ctx,st[k]||"",w-pad*2).forEach((ln,j)=>{const ly=y+pad+fs*(j+1)*1.35;if(ly<y+h-4)ctx.fillText(ln,x+w-pad,ly)})}
       jp.push({b:b64bytes(c.toDataURL("image/jpeg",.85)),w:W,h:H})}
+    if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}
     offer(makePdf(jp),docName+" - معبأ.pdf","application/pdf",!!EMB);toast("ملف PDF جاهز")}
   catch(e){console.warn(e);toast("تعذّر تجهيز الملف، حاول مرة أخرى")}
   finally{btn.disabled=false;btn.textContent="📄 تجهيز PDF"}};
