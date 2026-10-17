@@ -73,10 +73,12 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 /* ==================================================================== */
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v8.8";
+const VER="v9.0";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
-const EMB=(typeof EMBED!=="undefined")?EMBED:null;
+const LINK_ID=new URL(location.href).searchParams.get("report");
+let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
 const SLOT={before:51.1,after:12.5};
 let PAGES=[],IDS=[],state={},docName="البلاغات";
@@ -104,10 +106,19 @@ function chainAt(seed,k){let x=seed;for(let i=0;i<CHAIN-k;i++)x=h10(x);return x}
 const EXTKEY=()=>"ext_"+(EMB&&EMB.fid||"");
 function extState(){try{return JSON.parse(localStorage.getItem(EXTKEY())||"null")}catch(_){return null}}
 let REMOTE=null,CLOSED=false,RSTATE="";
-async function fetchRemote(){if(!EMB||!EMB.fid||!FB_DB)return;try{const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),7000);
-  const r=await fetch(`${FB_DB}/files/${EMB.fid}.json`,{signal:ctl.signal,cache:"no-store"});clearTimeout(tm);if(r.ok){const d=await r.json();REMOTE=(d&&typeof d==="object")?d:null;RSTATE=REMOTE?"ok":"none"}else RSTATE="err"+r.status}catch(e){RSTATE="fail"}}
-function effectiveExpiry(){const base=REMOTE&&REMOTE.until?REMOTE.until:(EXPIRES?new Date(EXPIRES).getTime():null);if(base===null)return null;let t=base;const x=EMB&&extState();if(x&&x.until>t)t=x.until;return t}
-function stopped(){if(EMB&&EMB.fid&&FB_DB&&(RSTATE!=="ok"||!REMOTE))return true;if(!ACTIVE)return true;if(REMOTE&&REMOTE.active===false)return true;const t=effectiveExpiry();return t!==null&&Date.now()>t}
+async function fetchRemote(){
+  if(!EMB||!EMB.fid||!FB_DB)return;
+  RSTATE="checking";REMOTE=null;
+  if(!/^[a-f0-9]{12,64}$/i.test(EMB.fid)||navigator.onLine===false){RSTATE="fail";return}
+  const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),10000);
+  try{const r=await fetch(FB_DB+"/files/"+EMB.fid+".json?t="+Date.now(),{signal:ctl.signal,cache:"no-store"});
+    if(!r.ok){RSTATE="err"+r.status;return}
+    const d=await r.json();if(navigator.onLine===false){RSTATE="fail";return}
+    REMOTE=d&&typeof d==="object"?d:null;RSTATE=REMOTE?"ok":"none";
+  }catch(e){RSTATE="fail"}finally{clearTimeout(tm)}
+}
+function effectiveExpiry(){const base=REMOTE&&REMOTE.until?REMOTE.until:(EXPIRES?new Date(EXPIRES).getTime():null);if(base===null)return null;let t=base;const x=EMB&&!EMB.linkMode&&extState();if(x&&x.until>t)t=x.until;return t}
+function stopped(){if(EMB&&(!EMB.fid||!FB_DB||navigator.onLine===false||RSTATE!=="ok"||!REMOTE||REMOTE.deleted))return true;if(!ACTIVE)return true;if(REMOTE&&REMOTE.active===false)return true;const t=effectiveExpiry();return t!==null&&Date.now()>t}
 function tryExtend(code){if(!EMB||!EMB.anchor)return false;const b=fromCode(code);if(!b)return false;
   const st=extState()||{k:0,cur:EMB.anchor};let x=b;
   for(let j=1;j<=CHAIN-st.k;j++){x=h10(x);if(toHex(x)===st.cur){const until=Date.now()+(EMB.hours||24)*3600e3;
@@ -160,19 +171,25 @@ document.body.innerHTML=`
 <button class="b-pdf" id="btnPdf" type="button" hidden>📄 تجهيز PDF</button>
 <button class="b-pdf" id="btnDelete" type="button" hidden>🗑 حذف الملف</button>
 <label class="hrs" id="hrsBox" hidden>صلاحية ملف الإرسال <select id="hrs" aria-label="مدة صلاحية ملف الإرسال">${Array.from({length:24},(_,i)=>`<option value="${i+1}"${i===23?" selected":""}>${i+1} ساعة</option>`).join("")}</select></label>
+<button class="b-send" id="btnLink" type="button" hidden>🔗 رابط للمستلم</button>
 <button class="b-send" id="btnHtml" type="button" hidden>📦 ملف للإرسال</button>
 <div class="done" id="done" hidden></div><div class="status" id="status"></div></div></header>
-<main class="wrap" hidden id="main"><details class="sent" id="sent" open hidden><summary>الملفات المرسلة — تمديد وإيقاف</summary><div class="owner" id="owner"></div><p>«تمديد» و«إيقاف» يصلان للمستلم تلقائياً عندما يكون متصلاً بالإنترنت. «رمز بدون إنترنت» ترسله له إذا كان بلا اتصال.</p><p id="noSent">لا توجد ملفات مرسلة بعد.</p><ul id="sentList"></ul></details><div class="empty" id="empty"><b>أرفق ملف البلاغات</b><span>اختر ملف PDF بنفس تصميم البلاغات، وتتحول كل صفحة إلى نموذج تكتب فيه الإفادة والإحداثيات وتغيّر الصور.</span></div><div class="list" id="list"></div></main>
+<main class="wrap" hidden id="main"><details class="sent" id="sent" open hidden><summary>الملفات المرسلة — تمديد وإيقاف</summary><div class="owner" id="owner"></div><p>أرسل «رابط للمستلم» للآيفون والأندرويد. يبقى التمديد والإيقاف والتشغيل والحذف بجوار كل ملف. يلزم اتصال المستلم بالإنترنت للتحقق من صلاحية الملف.</p><p id="noSent">لا توجد ملفات مرسلة بعد.</p><ul id="sentList"></ul></details><div class="empty" id="empty"><b>أرفق ملف البلاغات</b><span>اختر ملف PDF بنفس تصميم البلاغات، وتتحول كل صفحة إلى نموذج تكتب فيه الإفادة والإحداثيات وتغيّر الصور.</span></div><div class="list" id="list"></div></main>
 <div class="toast" id="toast" hidden></div>`;
 
-function showClosed(t,m){CLOSED=true;$("#bar").hidden=true;$("#main").hidden=true;$("#gate").hidden=false;
-  const ext=EMB&&EMB.anchor&&ACTIVE&&RSTATE==="ok"&&!(REMOTE&&REMOTE.active===false);
+function showClosed(t,m){if($("#done")){$("#done").innerHTML="";$("#done").hidden=true}CLOSED=true;$("#bar").hidden=true;$("#main").hidden=true;$("#gate").hidden=false;
+  const ext=EMB&&!EMB.linkMode&&EMB.anchor&&ACTIVE&&RSTATE==="ok"&&!(REMOTE&&REMOTE.active===false);
   $("#gateForm").innerHTML=`<h2>${t}</h2><p>${m}</p>`+(ext?`<p>إذا أرسل لك صاحب الملف رمز تمديد، اكتبه هنا:</p><input id="extIn" autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX" aria-label="رمز التمديد" style="letter-spacing:.08em;font-size:1.1rem;direction:ltr"><div class="err" id="extErr"></div><button type="submit">تمديد</button>`:"");
   if(ext)$("#gateForm").onsubmit=async e=>{e.preventDefault();if(tryExtend($("#extIn").value)){REMOTE=null;location.reload();return}else $("#extErr").textContent="الرمز غير صحيح أو مستخدم من قبل"};$("#gateForm").insertAdjacentHTML("beforeend",EMB&&EMB.fid&&FB_DB?`<button type="button" id="recheck" class="b-link" style="margin-top:4px">🔄 تحقق مرة أخرى</button>`:"");const rc=$("#recheck");if(rc)rc.onclick=async()=>{rc.disabled=true;await fetchRemote();if(!stopped())location.reload();else{rc.disabled=false;toast("ما زالت متوقفة")}}}
-function closeNow(){if(EMB&&EMB.fid&&FB_DB&&(RSTATE!=="ok"||!REMOTE)){showClosed("يلزم التحقق عبر الإنترنت","اتصل بالإنترنت ثم اضغط تحقق مرة أخرى. لن يُفتح الملف أو يُجهّز PDF حتى يتم التحقق من صلاحية الملف.");return}if(REMOTE&&REMOTE.active===false)showClosed("الصفحة متوقفة","أوقف صاحب الملف هذه الصفحة.");else showClosed("انتهت المدة",STOP_MSG)}
+function closeNow(){if(EMB&&(!EMB.fid||!FB_DB||navigator.onLine===false||RSTATE!=="ok"||!REMOTE)){showClosed("يلزم التحقق عبر الإنترنت","اتصل بالإنترنت ثم اضغط تحقق مرة أخرى. لن يُفتح الملف أو يُجهّز PDF حتى يتم التحقق من صلاحية الملف.");return}if(REMOTE&&(REMOTE.active===false||REMOTE.deleted))showClosed("الصفحة متوقفة","أوقف صاحب الملف هذه الصفحة.");else showClosed("انتهت المدة",STOP_MSG)}
 setTimeout(async()=>{if(EMB&&EMB.fid&&FB_DB){$("#gate").hidden=false;$("#gateForm").innerHTML="<h2>جارٍ التحقق…</h2>";await fetchRemote()}
-  if(stopped())closeNow();else await openApp();if(!EMB)await restoreSent();renderSent();
-  setInterval(async()=>{await fetchRemote();if(stopped()){if(!CLOSED)closeNow()}else if(CLOSED)location.reload();else if(EMB)$("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+untilText()},60000)},0);
+  if(stopped())closeNow();else{
+    try{if(EMB&&EMB.linkMode){await loadLinkedReport();await fetchRemote()}
+      if(stopped())closeNow();else await openApp();
+    }catch(e){console.warn(e);showClosed("تعذّر فتح النموذج",e.message||"تحقق من الرابط والاتصال")}
+  }
+  if(!EMB)await restoreSent();renderSent();
+  setInterval(async()=>{await fetchRemote();if(stopped()){if(!CLOSED)closeNow()}else if(CLOSED)location.reload();else if(EMB)$("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+untilText()},15000)},0);
 window.addEventListener("offline",()=>{if(EMB&&EMB.fid&&FB_DB){RSTATE="fail";closeNow()}});
 window.addEventListener("online",async()=>{if(EMB&&EMB.fid&&FB_DB){await fetchRemote();if(stopped())closeNow();else if(CLOSED)location.reload()}});
 function remoteText(){if(!EMB||!EMB.fid)return "";return {ok:" · 🌐 متصل بالتحكم",none:" · ⚠️ الملف غير مسجّل في التحكم",fail:" · ⚠️ لا اتصال بالتحكم"}[RSTATE]||(RSTATE?" · ⚠️ خطأ "+RSTATE:"")}
@@ -210,9 +227,11 @@ $("#pdfIn").onchange=async()=>{const f=$("#pdfIn").files[0];$("#pdfIn").value=""
   catch(e){console.warn(e);toast("تعذّرت قراءة الملف، تأكد أنه PDF سليم")}
   finally{b.disabled=false;b.textContent="📎 إرفاق ملف PDF"}};
 
-function load(pages,ids){PAGES=pages;IDS=ids;state={};IDS.forEach(id=>state[id]={ifada:"",coords:"",before:"",after:""});restore();
-  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
-  $("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF»."+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;build();scheduleDraft()}
+function load(pages,ids){PAGES=pages;IDS=ids;state={};IDS.forEach(id=>state[id]={ifada:"",coords:"",before:"",after:""});
+  if(EMB&&EMB.initialState)IDS.forEach(id=>{for(const k of ["ifada","coords","before","after"]){const v=EMB.initialState[id]?.[k];if(typeof v==="string")state[id][k]=v}});
+  restore();
+  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnLink").hidden=!!EMB;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
+  $("#status").textContent="اكتب في المربعات وغيّر صور «بعد»، ثم اضغط «تجهيز PDF». ("+VER+")"+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;build();scheduleDraft()}
 
 function build(){const list=$("#list");list.innerHTML="";
   IDS.forEach((id,i)=>{const s=el("section",{className:"sheet"});s.append(el("img",{src:PAGES[i],alt:"بلاغ "+id}),el("span",{className:"tag",textContent:`${i+1} / ${IDS.length}`}));
@@ -249,8 +268,9 @@ function makePdf(jpegs){const enc=new TextEncoder();const parts=[];let len=0;con
 function b64bytes(d){const s=atob(d.split(",")[1]);const a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a}
 function offer(blob,name,type,lockAfter){const file=new File([blob],name,{type});const d=$("#done");d.hidden=false;d.innerHTML="";
   if(!lockAfter&&navigator.canShare&&navigator.canShare({files:[file]})){const sb=el("button",{type:"button",className:"b-send",textContent:"📤 إرسال (واتساب…)"});
-    sb.onclick=()=>navigator.share({files:[file],title:name}).catch(()=>{});d.append(sb)}
+    sb.onclick=async()=>{if(EMB){await fetchRemote();if(stopped()){closeNow();return}}navigator.share({files:[file],title:name}).catch(()=>{})};d.append(sb)}
   const a=el("a",{href:URL.createObjectURL(blob),download:name,textContent:"⬇️ تحميل"});
+  if(EMB)a.onclick=async e=>{e.preventDefault();await fetchRemote();if(stopped()){closeNow();return}const direct=el("a",{href:a.href,download:name});document.body.append(direct);direct.click();direct.remove()};
   d.append(a,el("span",{textContent:name+" جاهز"}))}
 const AUTH_K="fb_owner";
 let AUTH_MEMORY=null;
@@ -314,8 +334,10 @@ async function restoreSent(){
   }catch(e){console.warn("Sent list restore failed",e)}
   list.sort((a,b)=>b.created-a.created);SENT_MEMORY=list;
 }
-async function syncSent(){const t=await idToken();if(!t)return false;try{const r=await fetch(`${FB_DB}/files.json?auth=${encodeURIComponent(t)}`,{cache:"no-store"});if(!r.ok)return "err"+r.status;
-  const all=await r.json()||{};const L=sentList();
+async function syncSent(){const t=await idToken();if(!t)return false;try{const r=await fetch(FB_DB+"/files.json?shallow=true&auth="+encodeURIComponent(t),{cache:"no-store"});if(!r.ok)return "err"+r.status;
+  const keys=Object.keys(await r.json()||{}).filter(k=>!k.startsWith("_"));const all={};
+  for(let start=0;start<keys.length;start+=8){const batch=await Promise.all(keys.slice(start,start+8).map(async fid=>[fid,await fbGet(fid)]));batch.forEach(([fid,d])=>{if(d)all[fid]=d})}
+  const L=sentList();
   Object.entries(all).forEach(([fid,d])=>{
     if(!d||fid.startsWith("_"))return;
     const old=L.find(x=>x.fid===fid);
@@ -357,10 +379,11 @@ function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}render
       finally{del.disabled=false}
     };
     li.append(el("div",{className:"ctl"}));li.lastChild.append(hs,xb,sb,ab,del);
+    if(f.shareURL){const cp=el("button",{type:"button",className:"b-link",textContent:"🔗 نسخ الرابط"});cp.onclick=()=>showRecipientLink(f.shareURL);li.lastChild.append(cp)}
     const out=el("code");const b=el("button",{type:"button",className:"b-link",textContent:"🔑 رمز بدون إنترنت"});
     b.onclick=async()=>{const L=sentList();const F=L.find(item=>item.fid===f.fid);if(!F)return;if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
       const code=toCode(chainAt(fromHex(F.seed),F.used));out.textContent=code;try{await navigator.clipboard.writeText(code);toast(`نُسخ الرمز — يمدّد ${F.hours} ساعة`)}catch(_){toast("انسخ الرمز الظاهر")}};
-    if(f.seed)li.append(b,out);ul.append(li)})}
+    if(f.seed&&f.mode!=="link")li.append(b,out);ul.append(li)})}
 $("#btnDelete").onclick=async()=>{
   if(EMB)return;
   if(!confirm("حذف الملف المفتوح وصوره والإفادات المحفوظة؟ ستبقى ملفات الإرسال وأزرار التحكم بها."))return;
@@ -372,7 +395,7 @@ $("#btnDelete").onclick=async()=>{
     try{localStorage.removeItem(KEY())}catch(_){}
     PAGES=[];IDS=[];state={};docName="البلاغات";
     $("#list").innerHTML="";$("#empty").hidden=false;$("#ttl").textContent="تعبئة البلاغات";
-    for(const id of ["#btnPdf","#btnDelete","#btnHtml","#hrsBox","#done"])$(id).hidden=true;
+    for(const id of ["#btnPdf","#btnDelete","#btnHtml","#btnLink","#hrsBox","#done"])$(id).hidden=true;
     $("#done").innerHTML="";$("#status").textContent="ابدأ بإرفاق ملف PDF. ("+VER+")";
     toast("تم حذف الملف المفتوح وصوره وإفاداته");
   }catch(e){console.warn(e);toast("تعذّر حذف الملف المحفوظ؛ حاول مرة أخرى")}
@@ -411,5 +434,67 @@ $("#btnHtml").onclick=async()=>{
   offer(new Blob([doc],{type:"text/html"}),docName+" - للتعبئة.html","text/html");toast(`ملف الإرسال جاهز — صالح ${h} ساعة`);$("#sent").open=true;$("#sent").scrollIntoView({behavior:"smooth",block:"start"})
   }catch(e){console.warn(e);toast("تعذّر إنشاء ملف الإرسال: "+(e.message||e))}
   finally{btn.disabled=false;btn.textContent="📦 ملف للإرسال"}};
+/* A recipient opens this same hosted page with an ID and a decryption key in the fragment. */
+function bytes64(bytes){let s="";for(let i=0;i<bytes.length;i+=16384)s+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(s)}
+function decode64(s){return Uint8Array.from(atob(s),ch=>ch.charCodeAt(0))}
+async function encryptReport(payload){
+  if(!crypto.subtle)throw Error("افتح الموقع المنشور عبر HTTPS لإنشاء رابط");
+  const raw=crypto.getRandomValues(new Uint8Array(32)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt"]);
+  const plain=new TextEncoder().encode(JSON.stringify(payload));
+  if(plain.length>40*1024*1024)throw Error("الملف كبير لإنشاء رابط واحد؛ قسّمه إلى ملفات أصغر");
+  const cipher=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,plain);
+  return {key:toHex(raw),stored:{v:1,iv:bytes64(iv),cipher:bytes64(new Uint8Array(cipher))}};
+}
+async function decryptReport(stored,hex){
+  if(!/^[a-f0-9]{64}$/i.test(hex||""))throw Error("الرابط ناقص. افتح الرابط كاملاً كما أرسله صاحب الملف");
+  if(!stored||stored.v!==1||typeof stored.iv!=="string"||typeof stored.cipher!=="string")throw Error("بيانات النموذج غير متاحة");
+  const key=await crypto.subtle.importKey("raw",fromHex(hex),"AES-GCM",false,["decrypt"]);
+  try{return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:decode64(stored.iv)},key,decode64(stored.cipher))))}
+  catch(e){throw Error("تعذّر قراءة النموذج. تأكد من نسخ الرابط كاملاً")}
+}
+function makeRecipientURL(fid,key){
+  const url=new URL(location.href);url.search="";url.hash="";url.searchParams.set("report",fid);url.hash="k="+key;return url.href;
+}
+async function loadLinkedReport(){
+  if(stopped())throw Error("الملف غير متاح حالياً");
+  const key=new URLSearchParams(location.hash.slice(1)).get("k");
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),30000);
+  try{
+    const r=await fetch(FB_DB+"/files/_content_"+EMB.fid+".json?t="+Date.now(),{cache:"no-store",signal:ctl.signal});
+    if(!r.ok)throw Error("تعذّر تحميل النموذج؛ تحقق من اتصال الإنترنت وصلاحيات القراءة في Firebase");
+    const payload=await decryptReport(await r.json(),key);
+    if(!validDraft({pages:payload.pages,ids:payload.ids,state:payload.initialState||{}}))throw Error("بيانات النموذج غير مكتملة");
+    EMB={...payload,fid:EMB.fid,linkMode:true};
+  }finally{clearTimeout(timer)}
+}
+function showRecipientLink(url){
+  const d=$("#done");d.hidden=false;d.innerHTML="";
+  const input=el("input",{value:url,readOnly:true});input.setAttribute("aria-label","رابط المستلم");input.style.cssText="width:100%;direction:ltr;padding:10px;font-size:13px;border:1px solid #aaa;border-radius:6px";
+  const copy=el("button",{type:"button",className:"b-link",textContent:"📋 نسخ الرابط"});
+  copy.onclick=async()=>{try{await navigator.clipboard.writeText(url);toast("تم نسخ الرابط؛ أرسله للمستلم في واتساب")}catch(e){input.focus();input.select();toast("اضغط مطولاً على الرابط واختر نسخ")}};
+  const open=el("a",{href:url,target:"_blank",rel:"noopener",textContent:"فتح نموذج المستلم"});
+  d.append(input,copy,open,el("span",{textContent:"هذا الرابط خاص بهذا الملف. افتحه في Safari أو Chrome."}));
+  if(navigator.share){const share=el("button",{type:"button",className:"b-send",textContent:"📤 مشاركة الرابط"});share.onclick=()=>navigator.share({title:docName,url}).catch(()=>{});d.append(share)}
+}
+$("#btnLink").onclick=async()=>{
+  if(EMB)return;if(!IDS.length){toast("أرفق ملف PDF أولاً");return}if(!authGet()){needLogin();return}
+  if(!/^https?:$/.test(location.protocol)){toast("افتح موقع الاستضافة لإنشاء رابط للمستلم");return}
+  const btn=$("#btnLink");btn.disabled=true;btn.textContent="جارٍ رفع النموذج…";
+  try{
+    const h=Math.min(24,Math.max(1,+$("#hrs").value||24)),created=Date.now();
+    const fid=toHex(crypto.getRandomValues(new Uint8Array(16)));
+    const encrypted=await encryptReport({name:docName,pages:PAGES,ids:IDS,initialState:state});
+    // Content remains encrypted in the database; the key is carried only by the recipient URL.
+    await fbPatch("_content_"+fid,encrypted.stored);
+    const meta={until:created+h*3600e3,active:true,name:docName,created,count:IDS.length,hours:h,mode:"link",updatedAt:created};
+    await fbPatch(fid,meta);
+    const shareURL=makeRecipientURL(fid,encrypted.key);
+    const list=sentList();list.unshift({fid,...meta,shareURL,seed:"",used:0});await saveSent(list);
+    renderSent();showRecipientLink(shareURL);$("#sent").open=true;toast("الرابط جاهز للآيفون والأندرويد");
+  }catch(e){console.warn(e);toast("تعذّر إنشاء الرابط: "+(e.message||e))}
+  finally{btn.disabled=false;btn.textContent="🔗 رابط للمستلم"}
+};
+
 </script>
 </body></html>
