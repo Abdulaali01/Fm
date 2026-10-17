@@ -75,12 +75,13 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v9.2";
+const VER="v9.3";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const LINK_ID=new URL(location.href).searchParams.get("report");
 let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
 let SUBMISSION_SENT=false;
 let REPLY_CHECKS=[];
+const VERIFIED_REPLIES=new Map();
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
 const SLOT={before:51.1,after:12.5};
 let PAGES=[],IDS=[],state={},docName="البلاغات";
@@ -126,7 +127,7 @@ function tryExtend(code){if(!EMB||!EMB.anchor)return false;const b=fromCode(code
   for(let j=1;j<=CHAIN-st.k;j++){x=h10(x);if(toHex(x)===st.cur){const until=Date.now()+(EMB.hours||24)*3600e3;
       try{localStorage.setItem(EXTKEY(),JSON.stringify({k:st.k+j,cur:toHex(b),until}))}catch(_){return false}return true}}
   return false}
-const KEY=()=>"rep_"+IDS.join("|").slice(0,200);
+const KEY=()=>"rep_v3_"+(EMB?"recipient_"+EMB.fid:"owner")+"_"+toHex(sha256(new TextEncoder().encode(JSON.stringify([docName,IDS])))).slice(0,32);
 function store(){try{const o={};IDS.forEach(id=>o[id]={ifada:state[id].ifada,coords:state[id].coords});localStorage.setItem(KEY(),JSON.stringify(o))}catch(_){}scheduleDraft()}
 function restore(){try{const o=JSON.parse(localStorage.getItem(KEY())||"{}");IDS.forEach(id=>{if(o[id])Object.assign(state[id],o[id])})}catch(_){}}
 
@@ -304,7 +305,7 @@ async function diag(res){res.style.color="var(--fg)";const L=[`الإصدار: $
 function needLogin(){const d=$("#sent");d.open=true;const o=$("#owner");o.classList.add("ask");o.scrollIntoView({behavior:"smooth",block:"center"});
   const em=o.querySelector("input[type=email]");if(em)setTimeout(()=>em.focus(),400);toast("سجّل دخولك أولاً ببريد Firebase وكلمة المرور");setTimeout(()=>o.classList.remove("ask"),2500)}
 function renderOwner(){const o=$("#owner");if(!o)return;const a=authGet();o.innerHTML="";
-  if(a){o.append(el("span",{textContent:"✅ مسجّل: "+a.email}));const out=el("button",{type:"button",className:"b-link",textContent:"خروج"});out.onclick=()=>{AUTH_MEMORY=null;try{localStorage.removeItem(AUTH_K)}catch(_){}SYNCED=false;renderOwner()};
+  if(a){o.append(el("span",{textContent:"✅ مسجّل: "+a.email}));const out=el("button",{type:"button",className:"b-link",textContent:"خروج"});out.onclick=()=>{AUTH_MEMORY=null;try{localStorage.removeItem(AUTH_K)}catch(_){}SYNCED=false;VERIFIED_REPLIES.clear();renderSent()};
     const dg=el("button",{type:"button",className:"b-link",textContent:"🧪 فحص الاتصال"});const res=el("div",{className:"lmsg"});dg.onclick=()=>diag(res);const setup=el("button",{type:"button",className:"b-link",textContent:"⚙ إعداد استقبال الملفات"});setup.onclick=()=>showSubmissionSetup(res);o.append(out,dg,setup,res);return}
   const em=el("input",{type:"email",placeholder:"البريد",autocomplete:"username"}),pw=el("input",{type:"password",placeholder:"كلمة المرور",autocomplete:"current-password"});
   em.setAttribute("aria-label","البريد");pw.setAttribute("aria-label","كلمة المرور");const go=el("button",{type:"button",className:"b-send",textContent:"دخول"});
@@ -387,7 +388,19 @@ function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}render
       const received=el("span",{className:"stt",textContent:"📨 بانتظار إرسال المستلم"});
       const download=el("button",{type:"button",className:"b-send",textContent:"📥 فتح الملف المعدّل",disabled:true});
       download.onclick=()=>openSubmission(f,download);li.append(received,download);
-      const check=async()=>{try{const status=await submissionStatus(f.fid);if(status==="received"){received.textContent="✅ وصل الملف المعدّل";received.className="stt on";download.disabled=false}}catch(e){received.textContent="تعذّر التحقق من وصول الرد؛ أعد التحديث"}};
+      const check=async()=>{
+        download.disabled=true;
+        if(!authGet()){received.textContent="سجّل الدخول للتحقق من ملف الرد";return}
+        try{
+          const status=await submissionStatus(f.fid);
+          if(status!=="received"){received.textContent="📨 بانتظار إرسال المستلم";received.className="stt";return}
+          let reply=VERIFIED_REPLIES.get(f.fid);
+          if(!reply){reply=await verifiedSubmission(f.fid);VERIFIED_REPLIES.set(f.fid,reply)}
+          if(!authGet())return;
+          received.textContent=(reply.result.fid?"✅ تم استلام PDF مؤكّد":"📥 رد محفوظ سابقًا")+" · "+fmt(reply.sentAt);
+          received.className="stt on";download.disabled=false;
+        }catch(e){received.className="stt off";received.textContent="لم يتم تأكيد وصول PDF: "+(e.message||e)}
+      };
       REPLY_CHECKS.push(check);check();
     }
     const out=el("code");const b=el("button",{type:"button",className:"b-link",textContent:"🔑 رمز بدون إنترنت"});
@@ -411,7 +424,9 @@ $("#btnDelete").onclick=async()=>{
   }catch(e){console.warn(e);toast("تعذّر حذف الملف المحفوظ؛ حاول مرة أخرى")}
   finally{btn.disabled=false}
 };
-$("#btnPdf").onclick=async()=>{const btn=$("#btnPdf");btn.disabled=true;btn.textContent="جارٍ التحقق والتجهيز…";
+$("#btnPdf").onclick=async()=>{
+  if(EMB&&EMB.returnToken&&!SUBMISSION_SENT&&!confirm("هل تؤكد الانتهاء وإرسال PDF المعدّل إلى المرسل؟ بعد الإرسال لا يمكن تعديل الرد."))return;
+  const btn=$("#btnPdf");btn.disabled=true;btn.textContent="جارٍ التحقق والتجهيز…";
   try{if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}try{await document.fonts.load("700 30px Cairo")}catch(_){}const jp=[];let W=910,H=1287;
     for(let i=0;i<IDS.length;i++){const st=state[IDS[i]];const bg=await loadImg(PAGES[i]);W=bg.width;H=bg.height;
       const c=el("canvas");c.width=W;c.height=H;const ctx=c.getContext("2d");ctx.drawImage(bg,0,0,W,H);
@@ -425,7 +440,7 @@ $("#btnPdf").onclick=async()=>{const btn=$("#btnPdf");btn.disabled=true;btn.text
       jp.push({b:b64bytes(c.toDataURL("image/jpeg",.85)),w:W,h:H})}
     if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}
     const pdfBlob=makePdf(jp);
-    if(EMB&&EMB.returnToken){btn.textContent="جارٍ إرسال الملف…";await sendSubmission(pdfBlob);lockSubmissionUI()}
+    if(EMB&&EMB.returnToken){btn.textContent="جارٍ إرسال الملف…";await sendSubmission(pdfBlob,true);lockSubmissionUI()}
     else{offer(pdfBlob,docName+" - معبأ.pdf","application/pdf",!!EMB);toast("ملف PDF جاهز")}}
   catch(e){console.warn(e);toast((EMB&&EMB.returnToken?"تعذّر إرسال الملف: ":"تعذّر تجهيز الملف: ")+(e.message||e))}
   finally{btn.disabled=!!SUBMISSION_SENT;btn.textContent=SUBMISSION_SENT?"✅ تم الإرسال":(EMB&&EMB.returnToken?"📤 إرسال للمرسل":"📄 تجهيز PDF")}};
@@ -573,13 +588,14 @@ async function sealSubmission(payload,hex){
   const iv=crypto.getRandomValues(new Uint8Array(12)),key=await crypto.subtle.importKey("raw",fromHex(hex),"AES-GCM",false,["encrypt"]);
   return {v:1,iv:bytes64(iv),cipher:bytes64(new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,plain)))};
 }
-async function sendSubmission(pdf){
+async function sendSubmission(pdf,confirmed=false){
+  if(!confirmed)throw Error("يجب تأكيد الإرسال أولاً");
   if(!EMB?.returnToken)throw Error("اطلب رابط استقبال جديدًا من المرسل");
   if(SUBMISSION_SENT)return;
   if(await submissionStatus(EMB.fid)==="received"){SUBMISSION_SENT=true;return}
   await fetchRemote();if(stopped()){closeNow();throw Error("الملف موقوف أو انتهت صلاحيته أو لا يوجد اتصال")}
   const key=new URLSearchParams(location.hash.slice(1)).get("k");
-  const sealed=await sealSubmission({name:docName+" - معبأ.pdf",pdf:bytes64(new Uint8Array(await pdf.arrayBuffer()))},key);
+  const sealed=await sealSubmission({kind:"recipient_submission",fid:EMB.fid,name:docName+" - معبأ.pdf",pdf:bytes64(new Uint8Array(await pdf.arrayBuffer()))},key);
   try{
     await requestJSON("submissions/"+EMB.fid,"PUT",{...sealed,token:EMB.returnToken,status:"received",sentAt:{".sv":"timestamp"}});
   }catch(e){
@@ -596,13 +612,18 @@ function lockSubmissionUI(){
   document.querySelectorAll(".sheet textarea").forEach(e=>e.readOnly=true);
   document.querySelectorAll(".sheet .pick").forEach(e=>e.disabled=true);
 }
+async function verifiedSubmission(fid){
+  const [stored,secret]=await Promise.all([ownerRequest("submissions/"+fid),ownerRequest("submissionKeys/"+fid)]);
+  if(!stored||stored.status!=="received"||!secret?.key||!Number.isFinite(stored.sentAt))throw Error("لا يوجد رد مكتمل");
+  const result=await decryptReport(stored,secret.key);
+  if(result.fid&&result.fid!==fid)throw Error("ملف الرد لا يخص هذا الرابط");
+  if(typeof result.pdf!=="string"||!result.pdf.startsWith("JVBERi0"))throw Error("الرد ليس ملف PDF سليمًا");
+  return {result,sentAt:stored.sentAt};
+}
 async function openSubmission(file,button){
   if(!authGet()){needLogin();return}button.disabled=true;
   try{
-    const [stored,secret]=await Promise.all([ownerRequest("submissions/"+file.fid),ownerRequest("submissionKeys/"+file.fid)]);
-    if(!stored||!secret?.key)throw Error("الملف المعدّل لم يصل بعد");
-    const result=await decryptReport(stored,secret.key);
-    if(typeof result.pdf!=="string")throw Error("بيانات الرد غير مكتملة");
+    const {result}=await verifiedSubmission(file.fid);
     offer(new Blob([decode64(result.pdf)],{type:"application/pdf"}),result.name||file.name+" - معبأ.pdf","application/pdf",false);
     $("#done").scrollIntoView({behavior:"smooth",block:"center"});
   }catch(e){toast("تعذّر فتح الرد: "+(e.message||e))}finally{button.disabled=false}
