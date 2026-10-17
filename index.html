@@ -74,7 +74,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script id="app">
-const VER="v8.6";
+const VER="v8.8";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const EMB=(typeof EMBED!=="undefined")?EMBED:null;
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
@@ -310,31 +310,55 @@ async function restoreSent(){
   const list=sentList();
   try{const db=await draftDB();const stored=await new Promise((resolve,reject)=>{
     const tx=db.transaction("drafts","readonly"),r=tx.objectStore("drafts").get("sent_files");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
-  });if(Array.isArray(stored)){const have=new Set(list.map(f=>f.fid));stored.forEach(f=>{if(!have.has(f.fid)){list.push(f);have.add(f.fid)}})}
+  });if(Array.isArray(stored)){const have=new Set(list.map(f=>f.fid));stored.forEach(f=>{const i=list.findIndex(x=>x.fid===f.fid);if(i<0){list.push(f);have.add(f.fid)}else if((f.updatedAt||0)>(list[i].updatedAt||0))list[i]=f})}
   }catch(e){console.warn("Sent list restore failed",e)}
   list.sort((a,b)=>b.created-a.created);SENT_MEMORY=list;
 }
 async function syncSent(){const t=await idToken();if(!t)return false;try{const r=await fetch(`${FB_DB}/files.json?auth=${encodeURIComponent(t)}`,{cache:"no-store"});if(!r.ok)return "err"+r.status;
-  const all=await r.json()||{};const L=sentList();const have=new Set(L.map(x=>x.fid));
-  Object.entries(all).forEach(([fid,d])=>{if(!d||have.has(fid)||fid.startsWith("_"))return;L.push({fid,name:d.name||"ملف",count:d.count||0,created:d.created||0,hours:d.hours||24,seed:"",used:0})});
-  L.sort((a,b)=>b.created-a.created);saveSent(L);return true}catch(e){return "fail"}}
+  const all=await r.json()||{};const L=sentList();
+  Object.entries(all).forEach(([fid,d])=>{
+    if(!d||fid.startsWith("_"))return;
+    const old=L.find(x=>x.fid===fid);
+    if(old){if(old.deleted)return;Object.assign(old,d)}
+    else L.push({fid,name:d.name||"ملف",count:d.count||0,created:d.created||0,hours:d.hours||24,seed:"",used:0,...d});
+  });
+  L.sort((a,b)=>b.created-a.created);await saveSent(L);return true}catch(e){return "fail"}}
 let SYNCED=false;
-function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}renderOwner();if(!SYNCED&&authGet()){SYNCED=true;syncSent().then(ok=>{if(ok===true)renderSent();else if(ok)toast("تعذّر جلب الملفات من القاعدة ("+ok+") — حدّث القواعد")})}const l=sentList();box.hidden=false;$("#noSent").hidden=!!l.length;const ul=$("#sentList");ul.innerHTML="";
+function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}renderOwner();if(!SYNCED&&authGet()){SYNCED=true;syncSent().then(ok=>{if(ok===true)renderSent();else if(ok)toast("تعذّر جلب الملفات من القاعدة ("+ok+") — حدّث القواعد")})}const l=sentList().filter(f=>!f.deleted);box.hidden=false;$("#noSent").hidden=!!l.length;const ul=$("#sentList");ul.innerHTML="";
   l.forEach((f,idx)=>{const li=el("li");const d=new Date(f.created).toLocaleString("ar-SA-u-ca-gregory",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"});
     li.append(el("span",{textContent:`${f.name} · ${f.count} بلاغ · ${d} · ${f.hours} ساعة`}));
     const stt=el("em",{className:"stt",textContent:"…"});li.append(stt);
     const paint=d=>{if(d===undefined){stt.textContent="⚠️ تعذّر الاتصال بالقاعدة";stt.className="stt off";return}if(!d){stt.textContent="⚪ غير مسجّل في القاعدة — اضغط تمديد أو إيقاف لتسجيله";stt.className="stt";return}
       if(d.active===false){stt.textContent="⛔ موقوف";stt.className="stt off";return}
       const live=d.until>Date.now();stt.textContent=(live?"🟢 متاح حتى ":"🔴 انتهى ")+fmt(d.until);stt.className="stt "+(live?"on":"off")};
-    fbGet(f.fid).then(paint);
+    if(typeof f.active==="boolean")paint(f);
+    fbGet(f.fid).then(d=>{if(d!==undefined)paint(d);else if(typeof f.active!=="boolean")paint(d)});
     const hs=el("select",{},Array.from({length:24},(_,i)=>`<option value="${i+1}"${i+1===f.hours?" selected":""}>${i+1} س</option>`).join(""));hs.setAttribute("aria-label","مدة التمديد");
     const xb=el("button",{type:"button",className:"b-send",textContent:"⏱ تمديد"}),sb=el("button",{type:"button",className:"b-pdf",textContent:"⛔ إيقاف"}),ab=el("button",{type:"button",className:"b-link",textContent:"▶ تشغيل"});
-    const act=async(btn,data,msg)=>{btn.disabled=true;try{if(!authGet()){needLogin();return}await fbPatch(f.fid,data);paint(await fbGet(f.fid));toast(msg)}catch(e){if(e.message==="login")needLogin();else toast("تعذّر الحفظ: "+e.message)}finally{btn.disabled=false}};
+    const act=async(btn,data,msg)=>{btn.disabled=true;try{if(!authGet()){needLogin();return}const update={...data,updatedAt:Date.now()};
+      const saved=await fbPatch(f.fid,update);
+      const current=sentList();const item=current.find(x=>x.fid===f.fid);if(item)Object.assign(item,saved||update);
+      await saveSent(current);paint(item||saved||update);toast(msg)}catch(e){if(e.message==="login")needLogin();else toast("تعذّر الحفظ: "+e.message)}finally{btn.disabled=false}};
     xb.onclick=()=>{const h=Math.min(24,Math.max(1,+hs.value||24));act(xb,{until:Date.now()+h*3600e3,active:true,name:f.name},`مُدّد ${h} ساعة من الآن`)};
     sb.onclick=()=>act(sb,{active:false,name:f.name},"تم إيقاف الملف");ab.onclick=()=>act(ab,{active:true,name:f.name},"تم تشغيل الملف");
-    li.append(el("div",{className:"ctl"}));li.lastChild.append(hs,xb,sb,ab);
+    const del=el("button",{type:"button",className:"b-pdf",textContent:"🗑 حذف",title:"حذف "+f.name});
+    del.setAttribute("aria-label","حذف الملف "+f.name);
+    del.onclick=async()=>{
+      if(!authGet()){needLogin();return}
+      if(!confirm("حذف «"+f.name+"» من القائمة وإيقاف ملف المستلم؟"))return;
+      del.disabled=true;
+      try{
+        const update={active:false,deleted:true,name:f.name,updatedAt:Date.now()};
+        await fbPatch(f.fid,update);
+        const current=sentList();const item=current.find(x=>x.fid===f.fid);if(item)Object.assign(item,update);
+        await saveSent(current);
+        renderSent();toast("تم حذف الملف من القائمة وإيقافه لدى المستلم");
+      }catch(e){console.warn(e);toast("تعذّر حذف الملف: "+(e.message||e))}
+      finally{del.disabled=false}
+    };
+    li.append(el("div",{className:"ctl"}));li.lastChild.append(hs,xb,sb,ab,del);
     const out=el("code");const b=el("button",{type:"button",className:"b-link",textContent:"🔑 رمز بدون إنترنت"});
-    b.onclick=async()=>{const L=sentList();const F=L[idx];if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
+    b.onclick=async()=>{const L=sentList();const F=L.find(item=>item.fid===f.fid);if(!F)return;if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
       const code=toCode(chainAt(fromHex(F.seed),F.used));out.textContent=code;try{await navigator.clipboard.writeText(code);toast(`نُسخ الرمز — يمدّد ${F.hours} ساعة`)}catch(_){toast("انسخ الرمز الظاهر")}};
     if(f.seed)li.append(b,out);ul.append(li)})}
 $("#btnDelete").onclick=async()=>{
