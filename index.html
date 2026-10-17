@@ -75,7 +75,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v9.1";
+const VER="v9.2";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const LINK_ID=new URL(location.href).searchParams.get("report");
 let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
@@ -514,7 +514,7 @@ $("#btnLink").onclick=async()=>{
 
 /* Completed PDFs return to a private owner inbox, without a recipient login. */
 async function requestJSON(path,method="GET",body,token){
-  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),60000);
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),body?.cipher?60000:12000);
   try{
     const url=FB_DB+"/"+path+".json"+(token?"?auth="+encodeURIComponent(token):"");
     const r=await fetch(url,{method,cache:"no-store",signal:ctl.signal,headers:body===undefined?{}:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});
@@ -549,8 +549,14 @@ async function showSubmissionSetup(host){
     host.append(el("p",{textContent:"مرة واحدة: افتح مشروع Firebase ← Realtime Database ← Rules. احفظ نسخة من القواعد الحالية، ثم طبّق قواعد هذا النظام أدناه واضغط Publish. هذه القواعد تقصر الإدارة وقراءة الملفات المعدّلة على حسابك، وتسمح للمستلم بإرسال رد واحد لرابطه فقط."}));
     const area=el("textarea",{value:rules,readOnly:true});area.style.cssText="width:100%;height:230px;direction:ltr;font:12px monospace";
     const copy=el("button",{type:"button",className:"b-link",textContent:"نسخ القواعد"});copy.onclick=async()=>{try{await navigator.clipboard.writeText(rules);toast("نُسخت القواعد")}catch(e){area.focus();area.select()}};
-    const test=el("button",{type:"button",className:"b-send",textContent:"فحص تفعيل الاستقبال"});test.onclick=async()=>{test.disabled=true;try{await verifySubmissionSetup();toast("تم تفعيل استقبال الملفات؛ أنشئ رابطًا جديدًا للمستلم")}catch(e){toast(e.message)}finally{test.disabled=false}};
-    host.append(area,copy,test,el("a",{href:"https://console.firebase.google.com/",target:"_blank",rel:"noopener",textContent:"فتح Firebase"}));
+    const result=el("div",{role:"status"});result.style.cssText="width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;font-size:15px;line-height:1.8";result.textContent="اضغط فحص تفعيل الاستقبال؛ ستبقى النتيجة هنا.";
+    const test=el("button",{type:"button",className:"b-send",textContent:"فحص تفعيل الاستقبال"});test.onclick=async()=>{
+      test.disabled=true;test.textContent="جارٍ الفحص…";result.style.color="var(--fg)";result.textContent="جارٍ فحص صلاحيات استقبال الملفات…";
+      try{await verifySubmissionSetup();result.style.color="var(--ok)";result.textContent="✅ الاستقبال مفعّل. اضغط رابط للمستلم أعلى الصفحة لإنشاء رابط جديد يدعم إعادة PDF المعدّل إلى لوحة التحكم."}
+      catch(e){result.style.color="var(--rust)";result.textContent="❌ "+(e.name==="AbortError"?"انتهى وقت الانتظار. تأكد من الإنترنت ثم أعد الفحص.":(e.message||String(e)))+"\nإذا كانت المشكلة في الصلاحيات: انسخ القواعد أعلاه، والصقها في Firebase ← Realtime Database ← Rules، ثم اضغط Publish."}
+      finally{test.disabled=false;test.textContent="فحص تفعيل الاستقبال";result.scrollIntoView({behavior:"smooth",block:"center"})}
+    };
+    host.append(area,copy,test,result,el("a",{href:"https://console.firebase.google.com/",target:"_blank",rel:"noopener",textContent:"فتح Firebase"}));
   }catch(e){host.textContent=e.message||String(e)}
 }
 async function verifySubmissionSetup(){
