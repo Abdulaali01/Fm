@@ -28,6 +28,7 @@ button:disabled{opacity:.6;cursor:wait}
 .sheet{position:relative;container-type:inline-size;background:#fff;border:1px solid var(--line);border-radius:4px;overflow:hidden;aspect-ratio:910/1287;max-width:100%}
 .sheet img{display:block;width:100%;height:100%}
 .sheet textarea{position:absolute;box-sizing:border-box;resize:none;border:1.5px dashed var(--fieldline);background:var(--field);color:#111;font-family:var(--display);font-weight:700;font-size:3.4cqw;line-height:1.5;padding:1.2cqw 1.4cqw;direction:rtl;text-align:right;border-radius:2px}
+.sheet textarea{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;overflow:auto;max-width:100%}
 .sheet textarea.c{font-size:3cqw}
 .sheet textarea::placeholder{color:#7a8794;font-weight:500}
 .sheet textarea:focus{background:rgba(255,255,255,.9);border-style:solid}
@@ -75,7 +76,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v9.3";
+const VER="v9.4";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const LINK_ID=new URL(location.href).searchParams.get("report");
 let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
@@ -253,8 +254,37 @@ function build(){const list=$("#list");list.innerHTML="";
 function loadImg(src){return new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=src})}
 async function shrink(file){const u=URL.createObjectURL(file);try{const im=await loadImg(u);const r=Math.min(1,1400/Math.max(im.width,im.height));
   const c=el("canvas");c.width=Math.round(im.width*r);c.height=Math.round(im.height*r);c.getContext("2d").drawImage(im,0,0,c.width,c.height);return c.toDataURL("image/jpeg",.85)}finally{URL.revokeObjectURL(u)}}
-function wrapLines(ctx,text,maxW){const out=[];for(const para of text.split(/\n/)){let line="";
-  for(const w of para.split(/\s+/)){const t=line?line+" "+w:w;if(ctx.measureText(t).width>maxW&&line){out.push(line);line=w}else line=t}out.push(line)}return out}
+function wrapLines(ctx,text,maxW){
+  const lines=[];
+  const segments=word=>typeof Intl!=="undefined"&&Intl.Segmenter?[...new Intl.Segmenter("ar",{granularity:"grapheme"}).segment(word)].map(x=>x.segment):Array.from(word);
+  for(const para of String(text).replace(/\r\n?/g,"\n").split("\n")){
+    let line="";
+    for(const word of para.split(/\s+/).filter(Boolean)){
+      const candidate=line?line+" "+word:word;
+      if(ctx.measureText(candidate).width<=maxW){line=candidate;continue}
+      if(line){lines.push(line);line=""}
+      if(ctx.measureText(word).width<=maxW){line=word;continue}
+      for(const part of segments(word)){
+        if(line&&ctx.measureText(line+part).width>maxW){lines.push(line);line=""}
+        line+=part;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+function drawBoxText(ctx,text,x,y,w,h,baseSize,label){
+  const pad=Math.max(4,Math.min(12,w*.045)),maxWidth=w-pad*2,maxHeight=h-pad*2;
+  let size=baseSize,lines;
+  do{ctx.font="700 "+size+"px Cairo, Tahoma, sans-serif";lines=wrapLines(ctx,text,maxWidth);
+    if(lines.length*size*1.35<=maxHeight)break;size--;
+  }while(size>=10);
+  if(size<10)throw Error("نص "+label+" أطول من مساحة المربع؛ اختصره ثم أعد الإرسال");
+  ctx.save();ctx.beginPath();ctx.rect(x+pad,y+pad,maxWidth,maxHeight);ctx.clip();
+  ctx.direction=/[\u0600-\u06FF]/.test(text)?"rtl":"ltr";ctx.textAlign="right";ctx.textBaseline="top";ctx.fillStyle="#111";
+  lines.forEach((line,i)=>ctx.fillText(line,x+w-pad,y+pad+i*size*1.35));
+  ctx.restore();
+}
 function rr(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
 /* Minimal PDF writer: one full-page JPEG per A4 page */
 function makePdf(jpegs){const enc=new TextEncoder();const parts=[];let len=0;const offs=[];
@@ -436,7 +466,7 @@ $("#btnPdf").onclick=async()=>{
         ctx.fillStyle=k==="before"?"#c2410c":"#15803d";rr(ctx,sx+sw-tw-10,sy+10,tw,42,20);ctx.fill();ctx.fillStyle="#fff";ctx.textAlign="center";ctx.fillText(t,sx+sw-10-tw/2,sy+41)}
       ctx.direction="rtl";ctx.textAlign="right";ctx.fillStyle="#111";
       for(const k of ["ifada","coords"]){const b=BOX[k],x=b[0]/100*W,y=b[1]/100*H,w=b[2]/100*W,h=b[3]/100*H,fs=Math.round((k==="ifada"?30:26)*W/910),pad=12;
-        ctx.direction=/[\u0600-\u06FF]/.test(st[k]||"")?"rtl":"ltr";ctx.font=`700 ${fs}px Cairo, Tahoma, sans-serif`;wrapLines(ctx,st[k]||"",w-pad*2).forEach((ln,j)=>{const ly=y+pad+fs*(j+1)*1.35;if(ly<y+h-4)ctx.fillText(ln,x+w-pad,ly)})}
+        drawBoxText(ctx,st[k]||"",x,y,w,h,fs,(k==="ifada"?"الإفادة":"الإحداثيات")+" في الصفحة "+(i+1))}
       jp.push({b:b64bytes(c.toDataURL("image/jpeg",.85)),w:W,h:H})}
     if(EMB&&EMB.fid&&FB_DB)await fetchRemote();if(stopped()){closeNow();return}
     const pdfBlob=makePdf(jp);
