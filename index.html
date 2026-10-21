@@ -47,6 +47,8 @@ button:disabled{opacity:.6;cursor:wait}
 .slot.before .lab{right:1.2cqw;background:#c2410c} .slot.after .lab{right:1.2cqw;background:#15803d}
 .pick{position:absolute;bottom:58.5%;font:700 2.6cqw var(--display);padding:1cqw 2cqw;border-radius:1.4cqw;background:var(--navy);color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}
 .pick.before{right:13%} .pick.after{right:51.5%}
+.wipe{position:absolute;left:38.4%;top:92%;font:700 2.6cqw var(--display);padding:1cqw 2cqw;border-radius:1.4cqw;background:#b91c1c;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}
+.b-wipe{background:#b91c1c}
 .toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:8px;font-family:var(--display);font-size:.9rem;z-index:30;max-width:calc(100% - 32px)}
 .linkbox{flex-basis:100%;display:flex;gap:6px}
 .linkbox input{flex:1;min-width:0;font:400 .85rem var(--body);direction:ltr;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
@@ -71,7 +73,7 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v10.0";
+const VER="v10.1";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const LINK_ID=new URL(location.href).searchParams.get("report");
 let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
@@ -169,6 +171,7 @@ document.body.innerHTML=`
 <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
 <button class="b-pdf" id="btnPdf" type="button" hidden>📄 تجهيز PDF</button>
 <button class="b-wa" id="btnWa" type="button" hidden>🟢 إرسال واتساب</button>
+<button class="b-wipe" id="btnWipeAll" type="button" hidden>🧽 مسح كل الكتابات</button>
 <button class="b-pdf" id="btnDelete" type="button" hidden>🗑 حذف الملف</button>
 <label class="hrs" id="hrsBox" hidden>صلاحية ملف الإرسال <select id="hrs" aria-label="مدة صلاحية ملف الإرسال">${Array.from({length:24},(_,i)=>`<option value="${i+1}"${i===23?" selected":""}>${i+1} ساعة</option>`).join("")}</select></label>
 <button class="b-send" id="btnLink" type="button" hidden>🔗 رابط للمستلم</button>
@@ -264,7 +267,7 @@ $("#pdfIn").onchange=async()=>{const f=$("#pdfIn").files[0];$("#pdfIn").value=""
 function load(pages,ids){PAGES=pages;IDS=ids;state={};IDS.forEach(id=>state[id]={ifada:"",coords:"",before:"",after:""});
   if(EMB&&EMB.initialState)IDS.forEach(id=>{for(const k of ["ifada","coords","before","after"]){const v=EMB.initialState[id]?.[k];if(typeof v==="string")state[id][k]=v}});
   restore();
-  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnWa").hidden=false;$("#btnPdf").textContent=EMB&&EMB.returnToken?(HAS_SENT?"📤 إعادة الإرسال للمرسل":"📤 إرسال للمرسل"):"📄 تجهيز PDF";$("#btnLink").hidden=!!EMB;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
+  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnWa").hidden=false;$("#btnWipeAll").hidden=false;$("#btnPdf").textContent=EMB&&EMB.returnToken?(HAS_SENT?"📤 إعادة الإرسال للمرسل":"📤 إرسال للمرسل"):"📄 تجهيز PDF";$("#btnLink").hidden=!!EMB;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
   $("#status").textContent="اكتب في المربعات وغيّر الصور، ثم اضغط «تجهيز PDF». ("+VER+")"+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;build();scheduleDraft()}
 
 function build(){const list=$("#list");list.innerHTML="";
@@ -278,7 +281,15 @@ function build(){const list=$("#list");list.innerHTML="";
       btn.onclick=()=>inp.click();inp.onchange=async()=>{const f=inp.files[0];inp.value="";if(!f)return;
         try{state[id][k]=await shrink(f);sl.querySelector("img").src=state[id][k];sl.hidden=false;scheduleDraft();toast("تم تغيير الصورة")}catch(_){toast("تعذّرت قراءة الصورة")}};
       s.append(sl,inp,btn)}
-    list.append(s)})}
+    const wb=el("button",{type:"button",className:"wipe",textContent:"🧽 مسح الكتابة"});
+    wb.onclick=async()=>{if(!confirm("مسح كل الكتابة في الإفادة والإحداثيات لهذا البلاغ لتكتب من جديد؟"))return;wb.disabled=true;
+      try{await wipePage(i);toast("تم مسح الكتابة — اكتب من جديد")}catch(e){toast("تعذّر المسح")}finally{wb.disabled=false}};
+    s.append(wb);list.append(s)})}
+/* Wipes old writing: clears the boxes in the page image itself and empties the fields */
+async function wipePage(i){const id=IDS[i],im=await loadImg(PAGES[i]);const c=el("canvas");c.width=im.width;c.height=im.height;
+  const ctx=c.getContext("2d",{willReadFrequently:true});ctx.drawImage(im,0,0);cleanBoxes(ctx,c.width,c.height);PAGES[i]=c.toDataURL("image/jpeg",.8);
+  state[id].ifada="";state[id].coords="";const sh=$("#list").children[i];if(sh){sh.querySelector("img").src=PAGES[i];for(const k of ["ifada","coords"]){const t=sh.querySelector("#"+k+"_"+i);if(t)t.value=""}}
+  store()}
 function loadImg(src){return new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=src})}
 async function shrink(file){const u=URL.createObjectURL(file);try{const im=await loadImg(u);const r=Math.min(1,1400/Math.max(im.width,im.height));
   const c=el("canvas");c.width=Math.round(im.width*r);c.height=Math.round(im.height*r);c.getContext("2d").drawImage(im,0,0,c.width,c.height);return c.toDataURL("image/jpeg",.85)}finally{URL.revokeObjectURL(u)}}
@@ -466,6 +477,9 @@ function renderSent(){const box=$("#sent");if(EMB){box.hidden=true;return}render
     b.onclick=async()=>{const L=sentList();const F=L.find(item=>item.fid===f.fid);if(!F)return;if(F.used>=CHAIN){toast("انتهت رموز التمديد لهذا الملف");return}F.used++;saveSent(L);
       const code=toCode(chainAt(fromHex(F.seed),F.used));out.textContent=code;try{await navigator.clipboard.writeText(code);toast(`نُسخ الرمز — يمدّد ${F.hours} ساعة`)}catch(_){toast("انسخ الرمز الظاهر")}};
     if(f.seed&&f.mode!=="link")li.append(b,out);ul.append(li)})}
+$("#btnWipeAll").onclick=async()=>{if(!IDS.length)return;if(!confirm("مسح كل الكتابات من جميع البلاغات ("+IDS.length+") لتكتب من جديد؟"))return;
+  const b=$("#btnWipeAll");b.disabled=true;try{for(let i=0;i<IDS.length;i++){b.textContent="جارٍ المسح "+(i+1)+"/"+IDS.length+"…";await wipePage(i)}await saveDraft();toast("تم مسح كل الكتابات")}
+  catch(e){toast("تعذّر المسح")}finally{b.disabled=false;b.textContent="🧽 مسح كل الكتابات"}};
 $("#btnDelete").onclick=async()=>{
   if(EMB)return;
   if(!confirm("حذف الملف المفتوح وصوره والإفادات المحفوظة؟ ستبقى ملفات الإرسال وأزرار التحكم بها."))return;
@@ -477,7 +491,7 @@ $("#btnDelete").onclick=async()=>{
     try{localStorage.removeItem(KEY())}catch(_){}
     PAGES=[];IDS=[];state={};docName="البلاغات";LAST_PDF=null;
     $("#list").innerHTML="";$("#empty").hidden=false;$("#ttl").textContent="تعبئة البلاغات";
-    for(const id of ["#btnPdf","#btnWa","#btnDelete","#btnHtml","#btnLink","#hrsBox","#done"])$(id).hidden=true;
+    for(const id of ["#btnPdf","#btnWa","#btnWipeAll","#btnDelete","#btnHtml","#btnLink","#hrsBox","#done"])$(id).hidden=true;
     $("#done").innerHTML="";$("#status").textContent="ابدأ بإرفاق ملف PDF. ("+VER+")";
     toast("تم حذف الملف المفتوح وصوره وإفاداته");
   }catch(e){console.warn(e);toast("تعذّر حذف الملف المحفوظ؛ حاول مرة أخرى")}
@@ -691,7 +705,7 @@ async function sendSubmission(pdf,confirmed=false){
 }
 function setEditable(on){
   document.querySelectorAll(".sheet textarea").forEach(e=>e.readOnly=!on);
-  document.querySelectorAll(".sheet .pick").forEach(e=>{e.disabled=!on;e.hidden=!on});
+  document.querySelectorAll(".sheet .pick,.sheet .wipe,#btnWipeAll").forEach(e=>{e.disabled=!on;e.hidden=!on});
 }
 function lockSubmissionUI(){
   if(!SUBMISSION_SENT)return;
