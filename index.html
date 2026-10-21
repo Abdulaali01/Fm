@@ -48,7 +48,8 @@ button:disabled{opacity:.6;cursor:wait}
 .pick{position:absolute;bottom:58.5%;font:700 2.6cqw var(--display);padding:1cqw 2cqw;border-radius:1.4cqw;background:var(--navy);color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}
 .pick.before{right:13%} .pick.after{right:51.5%}
 .wipe{position:absolute;left:38.4%;top:92%;font:700 2.6cqw var(--display);padding:1cqw 2cqw;border-radius:1.4cqw;background:#b91c1c;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);z-index:2}
-.b-wipe{background:#b91c1c}
+.b-wipe{background:#b91c1c} .b-mail{background:#2563eb}
+.hrs input[type=checkbox]{width:18px;height:18px;accent-color:var(--navy)}
 .toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:8px;font-family:var(--display);font-size:.9rem;z-index:30;max-width:calc(100% - 32px)}
 .linkbox{flex-basis:100%;display:flex;gap:6px}
 .linkbox input{flex:1;min-width:0;font:400 .85rem var(--body);direction:ltr;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
@@ -73,12 +74,13 @@ var FB_KEY = "AIzaSyCj_IStSKuqHpVCbSFk6cpElCRxkFBUeeg";  // Web API key من Fir
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <noscript><p style="padding:24px;text-align:center">افتح رابط النموذج في Safari أو Chrome. معاينة المرفقات لا تشغّل نموذج التعبئة.</p></noscript>
 <script id="app">
-const VER="v10.1";
+const VER="v10.3";
 const SRC={cfg:document.getElementById("cfg").textContent,app:document.getElementById("app").textContent,css:document.getElementById("css").textContent};
 const LINK_ID=new URL(location.href).searchParams.get("report");
 let EMB=(typeof EMBED!=="undefined")?EMBED:(LINK_ID?{fid:LINK_ID,linkMode:true}:null);
 let SUBMISSION_SENT=false,HAS_SENT=false,LAST_PDF=null;
 let REPLY_CHECKS=[];
+const canReturn=()=>!!(EMB&&EMB.returnToken&&EMB.showReturn);
 const VERIFIED_REPLIES=new Map();
 const BOX={ifada:[37.1,54.43,58.47,42.62],coords:[4.43,74.84,29.03,22.24]};
 const SLOT={before:51.1,after:12.5};
@@ -171,9 +173,11 @@ document.body.innerHTML=`
 <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
 <button class="b-pdf" id="btnPdf" type="button" hidden>📄 تجهيز PDF</button>
 <button class="b-wa" id="btnWa" type="button" hidden>🟢 إرسال واتساب</button>
+<button class="b-mail" id="btnMail" type="button" hidden>✉️ إرسال إيميل</button>
 <button class="b-wipe" id="btnWipeAll" type="button" hidden>🧽 مسح كل الكتابات</button>
 <button class="b-pdf" id="btnDelete" type="button" hidden>🗑 حذف الملف</button>
 <label class="hrs" id="hrsBox" hidden>صلاحية ملف الإرسال <select id="hrs" aria-label="مدة صلاحية ملف الإرسال">${Array.from({length:24},(_,i)=>`<option value="${i+1}"${i===23?" selected":""}>${i+1} ساعة</option>`).join("")}</select></label>
+<label class="hrs" id="retBox" hidden><input type="checkbox" id="showRet"> إظهار زر «إرسال للمرسل» للمستفيد</label>
 <button class="b-send" id="btnLink" type="button" hidden>🔗 رابط للمستلم</button>
 <button class="b-send" id="btnHtml" type="button" hidden>📦 ملف للإرسال</button>
 <div class="done" id="done" hidden></div><div class="status" id="status"></div></div></header>
@@ -208,7 +212,7 @@ async function openApp(){
     IDS.forEach(id=>{const old=d.state[id];if(old)for(const k of ["ifada","coords","before","after"])if(typeof old[k]==="string")state[id][k]=old[k]});
     build();toast("تم استعادة ملف البلاغات والصور والإفادات المحفوظة");
   }else if(!EMB)$("#status").textContent="ابدأ بإرفاق ملف PDF. ("+VER+")";
-  if(EMB&&EMB.returnToken)lockSubmissionUI();
+  if(canReturn())lockSubmissionUI();
 }
 
 /* ---- الكتابة السابقة: تُقرأ من الملف وتُمسح من خلفية الصفحة لتظهر قابلة للتعديل ---- */
@@ -227,7 +231,11 @@ function cleanBoxes(ctx,W,H){
     const d=ctx.getImageData(x,y,w,h).data,cnt=new Map();let best=null,bn=0;
     for(let yy=0;yy<h;yy+=3)for(let xx=0;xx<w;xx+=3){const p=(yy*w+xx)*4,q=(d[p]>>4)<<8|(d[p+1]>>4)<<4|(d[p+2]>>4);
       const e=cnt.get(q)||{n:0,r:0,g:0,b:0};e.n++;e.r+=d[p];e.g+=d[p+1];e.b+=d[p+2];cnt.set(q,e);if(e.n>bn){bn=e.n;best=e}}
-    ctx.fillStyle=best?`rgb(${Math.round(best.r/best.n)},${Math.round(best.g/best.n)},${Math.round(best.b/best.n)})`:"#fff";ctx.fillRect(x,y,w,h)}
+    ctx.fillStyle=best?`rgb(${Math.round(best.r/best.n)},${Math.round(best.g/best.n)},${Math.round(best.b/best.n)})`:"#fff";
+    const X=Math.round(b[0]/100*W)-1,Y=Math.round(b[1]/100*H)-1,BW=Math.round(b[2]/100*W)+2,BH=Math.round(b[3]/100*H)+2;
+    ctx.fillRect(X,Y,BW,BH);
+    ctx.save();ctx.setLineDash([Math.max(3,W*.004),Math.max(2,W*.003)]);ctx.lineWidth=Math.max(1,W*.0015);ctx.strokeStyle="#203a4c";
+    const g=Math.max(3,W*.004);ctx.strokeRect(X+g,Y+g,BW-2*g,BH-2*g);ctx.restore()}
 }
 function readEmbedded(raw){try{const head=new TextDecoder("latin1").decode(raw.subarray(0,Math.min(raw.length,8e6)));const m=head.match(/%TAIF:([A-Za-z0-9+\/=]+)/);if(!m)return null;
   const o=JSON.parse(new TextDecoder().decode(decode64(m[1])));return o&&o.v===1&&Array.isArray(o.data)?o:null}catch(_){return null}}
@@ -267,8 +275,8 @@ $("#pdfIn").onchange=async()=>{const f=$("#pdfIn").files[0];$("#pdfIn").value=""
 function load(pages,ids){PAGES=pages;IDS=ids;state={};IDS.forEach(id=>state[id]={ifada:"",coords:"",before:"",after:""});
   if(EMB&&EMB.initialState)IDS.forEach(id=>{for(const k of ["ifada","coords","before","after"]){const v=EMB.initialState[id]?.[k];if(typeof v==="string")state[id][k]=v}});
   restore();
-  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=false;$("#btnWa").hidden=false;$("#btnWipeAll").hidden=false;$("#btnPdf").textContent=EMB&&EMB.returnToken?(HAS_SENT?"📤 إعادة الإرسال للمرسل":"📤 إرسال للمرسل"):"📄 تجهيز PDF";$("#btnLink").hidden=!!EMB;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
-  $("#status").textContent="اكتب في المربعات وغيّر الصور، ثم اضغط «تجهيز PDF». ("+VER+")"+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;build();scheduleDraft()}
+  $("#empty").hidden=true;$("#ttl").textContent=`${docName} · ${IDS.length} بلاغ`;$("#btnPdf").hidden=!!EMB&&!canReturn();$("#btnWa").hidden=false;$("#btnMail").hidden=false;$("#btnWipeAll").hidden=false;$("#btnPdf").textContent=EMB&&EMB.returnToken?(HAS_SENT?"📤 إعادة الإرسال للمرسل":"📤 إرسال للمرسل"):"📄 تجهيز PDF";$("#btnLink").hidden=!!EMB;$("#btnDelete").hidden=!!EMB;$("#btnHtml").hidden=!!EMB;$("#done").hidden=true;
+  $("#status").textContent="اكتب في المربعات وغيّر الصور، ثم اضغط «تجهيز PDF». ("+VER+")"+(EMB?untilText():"");$("#hrsBox").hidden=!!EMB;$("#retBox").hidden=!!EMB;build();scheduleDraft()}
 
 function build(){const list=$("#list");list.innerHTML="";
   IDS.forEach((id,i)=>{const s=el("section",{className:"sheet"});s.append(el("img",{src:PAGES[i],alt:"بلاغ "+id}),el("span",{className:"tag",textContent:`${i+1} / ${IDS.length}`}));
@@ -491,7 +499,7 @@ $("#btnDelete").onclick=async()=>{
     try{localStorage.removeItem(KEY())}catch(_){}
     PAGES=[];IDS=[];state={};docName="البلاغات";LAST_PDF=null;
     $("#list").innerHTML="";$("#empty").hidden=false;$("#ttl").textContent="تعبئة البلاغات";
-    for(const id of ["#btnPdf","#btnWa","#btnWipeAll","#btnDelete","#btnHtml","#btnLink","#hrsBox","#done"])$(id).hidden=true;
+    for(const id of ["#btnPdf","#btnWa","#btnMail","#retBox","#btnWipeAll","#btnDelete","#btnHtml","#btnLink","#hrsBox","#done"])$(id).hidden=true;
     $("#done").innerHTML="";$("#status").textContent="ابدأ بإرفاق ملف PDF. ("+VER+")";
     toast("تم حذف الملف المفتوح وصوره وإفاداته");
   }catch(e){console.warn(e);toast("تعذّر حذف الملف المحفوظ؛ حاول مرة أخرى")}
@@ -537,6 +545,17 @@ $("#btnWa").onclick=async()=>{const btn=$("#btnWa");
     catch(e){if(e.name!=="AbortError")toast("الملف جاهز — اضغط «إرسال واتساب» مرة أخرى")}}
   catch(e){console.warn(e);toast("تعذّر تجهيز الملف: "+(e.message||e))}
   finally{btn.disabled=false;btn.textContent="🟢 إرسال واتساب"}};
+async function getPdf(btn,label){
+  if(EMB&&EMB.fid&&FB_DB){await fetchRemote()}if(EMB&&stopped()){closeNow();return null}
+  if(LAST_PDF)return LAST_PDF;btn.disabled=true;btn.textContent="جارٍ تجهيز الملف…";
+  try{const blob=await buildPdf();if(!blob)return null;LAST_PDF=new File([blob],pdfName(),{type:"application/pdf"});return LAST_PDF}
+  finally{btn.disabled=false;btn.textContent=label}}
+$("#btnMail").onclick=async()=>{const b=$("#btnMail"),label="✉️ إرسال إيميل";let f;
+  try{f=await getPdf(b,label)}catch(e){console.warn(e);toast("تعذّر تجهيز الملف: "+(e.message||e));return}if(!f)return;
+  try{if(await shareFile(f)){return}}catch(e){if(e.name==="AbortError")return;toast("الملف جاهز — اضغط «إرسال إيميل» مرة أخرى واختر تطبيق البريد");return}
+  const a=el("a",{href:URL.createObjectURL(f),download:f.name});document.body.append(a);a.click();a.remove();
+  toast("تم تحميل الملف — أرفقه في رسالة الإيميل");
+  setTimeout(()=>{location.href="mailto:?subject="+encodeURIComponent(f.name)+"&body="+encodeURIComponent("مرفق ملف البلاغات المعبأ: "+f.name)},700)};
 $("#btnHtml").onclick=async()=>{
   if(!IDS.length){toast("أرفق ملف PDF أولاً");return}
   if(!authGet()){needLogin();return}
@@ -586,7 +605,7 @@ async function loadLinkedReport(){
     const payload=await decryptReport(await r.json(),key);
     if(!validDraft({pages:payload.pages,ids:payload.ids,state:payload.initialState||{}}))throw Error("بيانات النموذج غير مكتملة");
     EMB={...payload,fid:EMB.fid,linkMode:true};
-    if(EMB.returnToken){SUBMISSION_SENT=(await submissionStatus(EMB.fid))==="received";HAS_SENT=SUBMISSION_SENT}
+    if(EMB.returnToken&&EMB.showReturn){SUBMISSION_SENT=(await submissionStatus(EMB.fid))==="received";HAS_SENT=SUBMISSION_SENT}
   }finally{clearTimeout(timer)}
 }
 function showRecipientLink(url){
@@ -606,13 +625,14 @@ $("#btnLink").onclick=async()=>{
   try{
     const h=Math.min(24,Math.max(1,+$("#hrs").value||24)),created=Date.now();
     const fid=toHex(crypto.getRandomValues(new Uint8Array(16)));
-    await verifySubmissionSetup();
-    const returnToken=toHex(crypto.getRandomValues(new Uint8Array(32)));
-    const encrypted=await encryptReport({name:docName,pages:PAGES,ids:IDS,initialState:state,returnToken});
-    await ownerRequest("submissionKeys/"+fid,"PUT",{token:returnToken,key:encrypted.key});
+    const showRet=$("#showRet").checked;
+    if(showRet)await verifySubmissionSetup();
+    const returnToken=showRet?toHex(crypto.getRandomValues(new Uint8Array(32))):"";
+    const encrypted=await encryptReport({name:docName,pages:PAGES,ids:IDS,initialState:state,returnToken,showReturn:showRet});
+    if(showRet)await ownerRequest("submissionKeys/"+fid,"PUT",{token:returnToken,key:encrypted.key});
     // Content remains encrypted in the database; the key is carried only by the recipient URL.
     await fbPatch("_content_"+fid,encrypted.stored);
-    const meta={until:created+h*3600e3,active:true,name:docName,created,count:IDS.length,hours:h,mode:"link",returnEnabled:true,updatedAt:created};
+    const meta={until:created+h*3600e3,active:true,name:docName,created,count:IDS.length,hours:h,mode:"link",returnEnabled:showRet,updatedAt:created};
     await fbPatch(fid,meta);
     const shareURL=makeRecipientURL(fid,encrypted.key);
     const list=sentList();list.unshift({fid,...meta,shareURL,seed:"",used:0});await saveSent(list);
@@ -697,7 +717,7 @@ async function sendSubmission(pdf,confirmed=false){
     // If the write completed but its response was lost, the public sentAt leaf confirms delivery.
     let at;try{at=await requestJSON("submissions/"+EMB.fid+"/sentAt")}catch(_){}
     if(!(Number.isFinite(at)&&at!==prev)){
-      if(HAS_SENT&&/صلاحيات/.test(e.message||""))throw Error("إعادة الإرسال غير مفعّلة بعد؛ اطلب من المرسل تحديث قواعد استقبال الملفات");
+      if(HAS_SENT&&/صلاحيات/.test(e.message||""))throw Error("إعادة الإرسال غير مفعّلة؛ أرسل الملف بالواتساب أو الإيميل، أو اطلب من المرسل تحديث قواعد Firebase");
       throw e;
     }
   }
@@ -708,7 +728,7 @@ function setEditable(on){
   document.querySelectorAll(".sheet .pick,.sheet .wipe,#btnWipeAll").forEach(e=>{e.disabled=!on;e.hidden=!on});
 }
 function lockSubmissionUI(){
-  if(!SUBMISSION_SENT)return;
+  if(!SUBMISSION_SENT||!canReturn())return;
   const btn=$("#btnPdf");btn.disabled=true;btn.textContent="✅ تم الإرسال";setEditable(false);
   const d=$("#done");d.hidden=false;d.innerHTML="";
   const ed=el("button",{type:"button",className:"b-link",textContent:"✏️ تعديل"});
